@@ -27,6 +27,7 @@ This folder is prepared as a starter for a FastAPI service that wraps a small ML
 - `app/ml/pipeline.py` – tiny example pipeline (train + predict)
 - `scripts/train.py` – example training run that saves an artifact
 - `tests/` – starter tests
+- `data/` - Contains the raw data along with any augmented data.
 
 ## Training stub
 `scripts/train.py` shows how to train a simple scikit-learn pipeline and persist it to `app/ml/artifacts/model.joblib`. Replace the synthetic data with your own and extend the pipeline as needed.
