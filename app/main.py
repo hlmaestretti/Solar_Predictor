@@ -1,13 +1,43 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
+from schemas.schemas import PredictRequest, PredictResponse
+from services.model_service import model_service
+import numpy as np
 
-from app.api.routes import router
-from app.core.config import settings
+app = FastAPI(
+    title="Solar Predictor API",
+    version="1.0.0",
+    description="Predicts plant-level AC power using a trained RandomForest model."
+)
 
 
-def get_application() -> FastAPI:
-    app = FastAPI(title=settings.app_name)
-    app.include_router(router)
-    return app
+@app.get("/health")
+def health():
+    return {"status": "ok"}
 
 
-app = get_application()
+@app.post("/predict", response_model=PredictResponse)
+def predict(payload: PredictRequest):
+    """
+    API endpoint for producing one solar power forecast.
+    """
+
+    try:
+        # Order of features must match the RF training script
+        features = np.array([
+            [
+                payload.hour,
+                payload.dayofyear,
+                payload.dayofweek,
+                payload.lag_1,
+                payload.lag_2,
+                payload.lag_3,
+                payload.lag_4
+            ]
+        ])
+
+        y_pred = model_service.predict(features)
+
+        return PredictResponse(predicted_ac_power=y_pred)
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
