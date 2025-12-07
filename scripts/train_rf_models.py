@@ -123,6 +123,11 @@ def run_training(path: str):
         df_agg = aggregate_plant_power(df_raw)
         df_feat = add_features(df_agg, lag_hours=1)
 
+        processed_dir = Path("data/processed")
+        processed_dir.mkdir(exist_ok=True, parents=True)        
+        df_feat.to_parquet(processed_dir / "features.parquet")
+        print(f"Saved processed training features to {processed_dir / 'features.parquet'}")
+
         train_df, test_df = split_train_test(df_feat)
 
         model, mae, rmse = train_random_forest(train_df, test_df)

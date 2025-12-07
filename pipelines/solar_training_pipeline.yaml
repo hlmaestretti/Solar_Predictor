@@ -1,0 +1,320 @@
+# PIPELINE DEFINITION
+# Name: solar-forecasting-training-pipeline
+# Description: End-to-end pipeline for solar forecasting RF model.
+# Inputs:
+#    gcs_model_path: str [Default: 'gs://your-bucket/model.pkl']
+#    lag_hours: int [Default: 1.0]
+#    min_samples_leaf: int [Default: 2.0]
+#    n_estimators: int [Default: 200.0]
+#    raw_csv_path: str
+components:
+  comp-data-prep-component:
+    executorLabel: exec-data-prep-component
+    inputDefinitions:
+      parameters:
+        raw_csv_path:
+          parameterType: STRING
+    outputDefinitions:
+      artifacts:
+        output_path:
+          artifactType:
+            schemaTitle: system.Artifact
+            schemaVersion: 0.0.1
+  comp-feature-engineering-component:
+    executorLabel: exec-feature-engineering-component
+    inputDefinitions:
+      artifacts:
+        cleaned_data:
+          artifactType:
+            schemaTitle: system.Artifact
+            schemaVersion: 0.0.1
+      parameters:
+        lag_hours:
+          parameterType: NUMBER_INTEGER
+    outputDefinitions:
+      artifacts:
+        output_path:
+          artifactType:
+            schemaTitle: system.Artifact
+            schemaVersion: 0.0.1
+  comp-train-model-component:
+    executorLabel: exec-train-model-component
+    inputDefinitions:
+      artifacts:
+        features:
+          artifactType:
+            schemaTitle: system.Artifact
+            schemaVersion: 0.0.1
+      parameters:
+        min_samples_leaf:
+          parameterType: NUMBER_INTEGER
+        n_estimators:
+          parameterType: NUMBER_INTEGER
+    outputDefinitions:
+      artifacts:
+        model_output:
+          artifactType:
+            schemaTitle: system.Artifact
+            schemaVersion: 0.0.1
+  comp-upload-model-component:
+    executorLabel: exec-upload-model-component
+    inputDefinitions:
+      artifacts:
+        model_artifact:
+          artifactType:
+            schemaTitle: system.Artifact
+            schemaVersion: 0.0.1
+      parameters:
+        gcs_uri:
+          parameterType: STRING
+deploymentSpec:
+  executors:
+    exec-data-prep-component:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - data_prep_component
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.15.1'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef data_prep_component(raw_csv_path: str, output_path: dsl.Output[dsl.Artifact]):\n\
+          \    \"\"\"\n    Loads raw solar dataset, parses timestamp, aggregates AC_POWER\n\
+          \    across inverters, and creates one row per timestamp.\n    \"\"\"\n\
+          \    df = pd.read_csv(raw_csv_path)\n\n    # Parse timestamp\n    df[\"\
+          DATE_TIME\"] = pd.to_datetime(df[\"DATE_TIME\"], dayfirst=True)\n    df\
+          \ = df.sort_values(\"DATE_TIME\")\n\n    # Aggregate AC power across inverters\n\
+          \    agg = (\n        df.groupby(\"DATE_TIME\")[\"AC_POWER\"]\n        \
+          \  .sum()\n          .sort_index()\n          .to_frame(name=\"AC_POWER_PLANT\"\
+          )\n    )\n\n    agg.to_parquet(output_path.path)\n\n"
+        image: python:3.11
+    exec-feature-engineering-component:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - feature_engineering_component
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.15.1'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef feature_engineering_component(\n    cleaned_data: dsl.Input[dsl.Artifact],\n\
+          \    lag_hours: int,\n    output_path: dsl.Output[dsl.Artifact]\n):\n  \
+          \  \"\"\"\n    Creates features:\n      - hour, dayofyear, dayofweek\n \
+          \     - lag features for AC_POWER_PLANT\n    \"\"\"\n    df = pd.read_parquet(cleaned_data.path)\n\
+          \n    # Time features\n    df[\"hour\"] = df.index.hour\n    df[\"dayofyear\"\
+          ] = df.index.dayofyear\n    df[\"dayofweek\"] = df.index.dayofweek\n\n \
+          \   # Lag features (4 intervals per hour for 15min data)\n    lag_steps\
+          \ = lag_hours * 4\n    for i in range(1, lag_steps + 1):\n        df[f\"\
+          lag_{i}\"] = df[\"AC_POWER_PLANT\"].shift(i)\n\n    df = df.dropna()\n \
+          \   df.to_parquet(output_path.path)\n\n"
+        image: python:3.11
+    exec-train-model-component:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - train_model_component
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.15.1'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef train_model_component(\n    features: dsl.Input[dsl.Artifact],\n\
+          \    n_estimators: int,\n    min_samples_leaf: int,\n    model_output: dsl.Output[dsl.Artifact]\n\
+          ):\n    \"\"\"\n    Loads engineered features, trains RF model,\n    logs\
+          \ to MLflow, saves model.pkl.\n    \"\"\"\n\n    mlflow.set_experiment(\"\
+          solar-predictor-kubeflow\")\n\n    df = pd.read_parquet(features.path)\n\
+          \n    # Train/test split\n    split_idx = int(len(df) * 0.8)\n    train_df\
+          \ = df.iloc[:split_idx]\n    test_df = df.iloc[split_idx:]\n\n    X_train\
+          \ = train_df.drop(columns=[\"AC_POWER_PLANT\"])\n    y_train = train_df[\"\
+          AC_POWER_PLANT\"]\n\n    X_test = test_df.drop(columns=[\"AC_POWER_PLANT\"\
+          ])\n    y_test = test_df[\"AC_POWER_PLANT\"]\n\n    with mlflow.start_run(run_name=\"\
+          kubeflow-rf-training\"):\n\n        model = RandomForestRegressor(\n   \
+          \         n_estimators=n_estimators,\n            min_samples_leaf=min_samples_leaf,\n\
+          \            random_state=42,\n            n_jobs=-1\n        )\n\n    \
+          \    model.fit(X_train, y_train)\n        preds = model.predict(X_test)\n\
+          \n        mae = mean_absolute_error(y_test, preds)\n        rmse = np.sqrt(mean_squared_error(y_test,\
+          \ preds))\n\n        # Log params + metrics\n        mlflow.log_param(\"\
+          n_estimators\", n_estimators)\n        mlflow.log_param(\"min_samples_leaf\"\
+          , min_samples_leaf)\n        mlflow.log_metric(\"mae\", mae)\n        mlflow.log_metric(\"\
+          rmse\", rmse)\n\n        # Save model\n        joblib.dump(model, model_output.path)\n\
+          \n"
+        image: python:3.11
+    exec-upload-model-component:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - upload_model_component
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.15.1'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef upload_model_component(\n    model_artifact: dsl.Input[dsl.Artifact],\n\
+          \    gcs_uri: str\n):\n    \"\"\"\n    Uploads model.pkl to a GCS bucket.\n\
+          \    Requires GOOGLE_APPLICATION_CREDENTIALS in the runtime environment.\n\
+          \    \"\"\"\n    storage_client = storage.Client()\n\n    bucket_name, blob_name\
+          \ = gcs_uri.replace(\"gs://\", \"\").split(\"/\", 1)\n    bucket = storage_client.bucket(bucket_name)\n\
+          \    blob = bucket.blob(blob_name)\n\n    blob.upload_from_filename(model_artifact.path)\n\
+          \    print(f\"Model uploaded \u2192 {gcs_uri}\")\n\n"
+        image: python:3.11
+pipelineInfo:
+  description: End-to-end pipeline for solar forecasting RF model.
+  name: solar-forecasting-training-pipeline
+root:
+  dag:
+    tasks:
+      data-prep-component:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-data-prep-component
+        inputs:
+          parameters:
+            raw_csv_path:
+              componentInputParameter: raw_csv_path
+        taskInfo:
+          name: data-prep-component
+      feature-engineering-component:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-feature-engineering-component
+        dependentTasks:
+        - data-prep-component
+        inputs:
+          artifacts:
+            cleaned_data:
+              taskOutputArtifact:
+                outputArtifactKey: output_path
+                producerTask: data-prep-component
+          parameters:
+            lag_hours:
+              componentInputParameter: lag_hours
+        taskInfo:
+          name: feature-engineering-component
+      train-model-component:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-train-model-component
+        dependentTasks:
+        - feature-engineering-component
+        inputs:
+          artifacts:
+            features:
+              taskOutputArtifact:
+                outputArtifactKey: output_path
+                producerTask: feature-engineering-component
+          parameters:
+            min_samples_leaf:
+              componentInputParameter: min_samples_leaf
+            n_estimators:
+              componentInputParameter: n_estimators
+        taskInfo:
+          name: train-model-component
+      upload-model-component:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-upload-model-component
+        dependentTasks:
+        - train-model-component
+        inputs:
+          artifacts:
+            model_artifact:
+              taskOutputArtifact:
+                outputArtifactKey: model_output
+                producerTask: train-model-component
+          parameters:
+            gcs_uri:
+              componentInputParameter: gcs_model_path
+        taskInfo:
+          name: upload-model-component
+  inputDefinitions:
+    parameters:
+      gcs_model_path:
+        defaultValue: gs://your-bucket/model.pkl
+        isOptional: true
+        parameterType: STRING
+      lag_hours:
+        defaultValue: 1.0
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+      min_samples_leaf:
+        defaultValue: 2.0
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+      n_estimators:
+        defaultValue: 200.0
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+      raw_csv_path:
+        parameterType: STRING
+schemaVersion: 2.1.0
+sdkVersion: kfp-2.15.1

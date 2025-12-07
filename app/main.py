@@ -2,6 +2,10 @@ from fastapi import FastAPI, HTTPException
 from schemas.schemas import PredictRequest, PredictResponse
 from services.model_service import model_service
 import numpy as np
+import csv
+from datetime import datetime
+
+LOG_PATH = "/app/prediction_logs.csv"
 
 app = FastAPI(
     title="Solar Predictor API",
@@ -36,6 +40,20 @@ def predict(payload: PredictRequest):
         ])
 
         y_pred = model_service.predict(features)
+
+        with open(LOG_PATH, "a", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow([
+                datetime.utcnow().isoformat(),
+                payload.hour,
+                payload.dayofyear,
+                payload.dayofweek,
+                payload.lag_1,
+                payload.lag_2,
+                payload.lag_3,
+                payload.lag_4,
+                y_pred
+            ])
 
         return PredictResponse(predicted_ac_power=y_pred)
 
