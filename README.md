@@ -24,15 +24,27 @@ Given recent plant-level AC power readings and timestamps, produce a 15-minute-a
 ## Architecture diagram
 ```mermaid
 flowchart LR
-    A[Raw CSV\n data/raw/solar_generation_data.csv] --> B[data_prep_component\ncomponents/data_prep.py]
-    B --> C[feature_engineering_component\ncomponents/feature_engineering.py]
-    C --> D[train_model_component\ncomponents/train_model.py\nMLflow metrics]
-    D --> E[Model artifact\nmodel.pkl on GCS or app/model.pkl]
-    E --> F[FastAPI inference\napp/main.py + services/model_service.py]
-    F --> G[Prediction log\napp/prediction_logs.csv]
-    C -.-> H[pipelines/solar_training_pipeline.py\nCompiled to YAML for Kubeflow]
-    G --> I[Monitoring\nmonitoring/*.py whylogs drift report]
-    D --> J[Experiment tracking\nmlruns/ (MLflow UI)]
+    A[Raw CSV: data_raw_solar_generation_data.csv]
+    B[data_prep_component: components_data_prep.py]
+    C[feature_engineering_component: components_feature_engineering.py]
+    D[train_model_component: components_train_model.py]
+    E[Model artifact: model.pkl]
+    F[FastAPI inference: app_main.py]
+    G[Prediction log: app_prediction_logs.csv]
+    H[Kubeflow Pipeline: solar_training_pipeline.py]
+    I[Monitoring: whylogs drift scripts]
+    J[Experiment tracking: MLflow UI]
+
+    A --> B
+    B --> C
+    C --> D
+    D --> E
+    E --> F
+    F --> G
+    C -.-> H
+    G --> I
+    D --> J
+
 ```
 
 ## Project layout (key files)
