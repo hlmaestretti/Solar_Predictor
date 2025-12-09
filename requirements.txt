@@ -13,3 +13,4 @@ matplotlib==3.10.0
 mlflow==2.10.0
 kfp==1.31.0
 whylogs==0.11.1
+IPython==8.17.0

@@ -34,7 +34,8 @@ def main():
     df = df.drop(columns=["timestamp"])
 
     print("Generating WhyLogs current profile...")
-    profile = why.log(df).profile
+    results = why.log(df)
+    profile = results.profile()
 
     OUTPUT_PROFILE.parent.mkdir(exist_ok=True, parents=True)
     profile.write(str(OUTPUT_PROFILE))

@@ -5,7 +5,7 @@ import numpy as np
 import csv
 from datetime import datetime
 
-LOG_PATH = "/app/prediction_logs.csv"
+LOG_PATH = "prediction_logs.csv"
 
 app = FastAPI(
     title="Solar Predictor API",
